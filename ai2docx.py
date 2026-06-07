@@ -229,6 +229,7 @@ def _html_to_markdown(html_content: str) -> str | None:
             self._cell_buf: list[str] = []
             self._in_cell = False
             self._skip_depth = 0
+            self._heading_level = 0           # 当前标题级别 0=非标题
 
         def _flush_text(self):
             text = "".join(self._text_buf)
@@ -244,6 +245,12 @@ def _html_to_markdown(html_content: str) -> str | None:
                 self._skip_depth += 1
                 return
             if self._skip_depth:
+                return
+            # --- 标题标签 <h1>~<h6> ---
+            if t in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                self._flush_text()
+                self._heading_level = int(t[1])
+                self._text_buf = []
                 return
             if t == "table":
                 self._flush_text()
@@ -264,6 +271,16 @@ def _html_to_markdown(html_content: str) -> str | None:
                 self._skip_depth = max(0, self._skip_depth - 1)
                 return
             if self._skip_depth:
+                return
+            # --- 标题结束 </h1>~</h6>：输出 Markdown 标题 ---
+            if self._heading_level and t in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                text = "".join(self._text_buf)
+                text = html.unescape(text)
+                text = re.sub(r"[ \t]+", " ", text).strip()
+                if text:
+                    self.parts.append(("text", f"{'#' * self._heading_level} {text}"))
+                self._text_buf = []
+                self._heading_level = 0
                 return
             if t == "table":
                 self._in_table = False
@@ -452,8 +469,9 @@ def _preprocess_content(content: str) -> str:
     """
     预处理 AI 内容，提升 Pandoc 兼容性。
     """
-    content = _fix_chinese_headings(content)
-    content = _fix_space_aligned_tables(content)   # 空格/制表符对齐表格 → 管道表格
+    content = _fix_numbered_headings(content)      # "1. 概述" → 标题
+    content = _fix_chinese_headings(content)        # "一、概述" → 标题
+    content = _fix_space_aligned_tables(content)    # 空格/制表符对齐表格 → 管道表格
     content = _fix_markdown_tables(content)         # 补全缺失的分隔行
 
     lines = content.split("\n")
@@ -513,6 +531,7 @@ def _fix_chinese_headings(content: str) -> str:
     PATTERNS = [
         (r"^[一二三四五六七八九十]+[、．]\s*", 2),              # 一、二、…
         (r"^第[一二三四五六七八九十\d]+[章节篇部分]\s*", 2),   # 第一章、第二节 …
+        (r"^[（(][一二三四五六七八九十][）)]\s*\S", 2),         # （一）、(一)…
         (r"^(方法|步骤|阶段|结论|条件|参数)\s*\d+\s*[：:]\s*\S", 3),
         (r"^依据\s+\d+\s*[：:]\s*\S", 3),                       # 依据 2：…（必须有数字）
         (r"^方案\s*[A-D一二三四五六]\s*[：:]\s*\S", 4),         # 方案 A：…
@@ -565,6 +584,80 @@ def _fix_chinese_headings(content: str) -> str:
             result.append("")
         else:
             result.append(line)
+
+    return "\n".join(result)
+
+
+def _fix_numbered_headings(content: str) -> str:
+    """
+    检测序号式标题（如 "1. 概述"、"1.1 背景"），转为 Markdown 标题。
+
+    - X.Y.Z（三级编号）→ H4，几乎不可能是列表项，直接转换
+    - X.Y  （二级编号）→ H3，同上
+    - N.   （单级编号）→ H2，连续 3+ 条视为有序列表（操作步骤），否则转标题
+    """
+    lines = content.split("\n")
+    result = []
+    i = 0
+
+    def _add_heading(text: str, level: int):
+        """插入标题行（带前后空行）"""
+        if result and result[-1].strip() != "":
+            result.append("")
+        result.append(f"{'#' * level} {text}")
+        result.append("")
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped or re.match(r"^#{1,6}\s", stripped):
+            result.append(line)
+            i += 1
+            continue
+
+        # 1) 三级编号 X.Y.Z → H4
+        if re.match(r"^\d+\.\d+\.\d+\s+\S", stripped):
+            _add_heading(stripped, 4)
+            i += 1
+            continue
+
+        # 2) 二级编号 X.Y → H3
+        if re.match(r"^\d+\.\d+\s+\S", stripped):
+            _add_heading(stripped, 3)
+            i += 1
+            continue
+
+        # 3) 单级编号 N. → 块级检测：连续 3+ 条为列表，否则为标题
+        if re.match(r"^\d+[\.\、]\s+\S", stripped):
+            # 收集后续连续编号行（跳过中间空行）
+            block = [stripped]
+            j = i + 1
+            while j < len(lines):
+                ns = lines[j].strip()
+                if not ns:
+                    j += 1
+                    continue
+                # 必须是单级编号，排除 X.Y 多级编号
+                if re.match(r"^\d+[\.\、]\s+\S", ns) and not re.match(r"^\d+\.\d+\s+\S", ns):
+                    block.append(ns)
+                    j += 1
+                else:
+                    break
+
+            if len(block) >= 3:
+                # 3+ 条连续编号 → 有序列表，保留原样
+                for k in range(i, j):
+                    result.append(lines[k])
+                i = j
+            else:
+                # 1-2 条 → 标题
+                _add_heading(stripped, 2)
+                i += 1
+            continue
+
+        result.append(line)
+        i += 1
 
     return "\n".join(result)
 
@@ -743,9 +836,9 @@ def _postprocess_docx(docx_path: str):
     for para in doc.paragraphs:
         style_name = para.style.name if para.style else ""
 
-        # --- 调整标题字体 ---
-        if style_name.startswith("Heading"):
-            level = style_name.replace("Heading", "").strip()
+        # --- 调整标题字体（大小写不敏感） ---
+        if style_name.lower().startswith("heading"):
+            level = style_name.replace("Heading", "").replace("heading", "").strip()
             level = int(level) if level.isdigit() else 1
             _set_heading_style(para, level)
             continue
@@ -755,9 +848,17 @@ def _postprocess_docx(docx_path: str):
             _set_code_style(para)
             continue
 
-        # --- 正文样式（Pandoc 可能用 Normal / First Paragraph / Body Text） ---
-        if style_name in ("Normal", "First Paragraph", "Body Text") or not style_name:
-            _set_body_style(para)
+        # --- 正文/列表/引用样式（统一应用正文格式：字体、行距、缩进） ---
+        else:
+            # 以下样式已有内置缩进，不重复添加首行缩进：
+            #   List Bullet/Number → 项目符号/编号
+            #   Compact            → Pandoc 紧凑列表项
+            #   Title              → 文档标题
+            skip_indent = (
+                style_name in ("List Bullet", "List Number", "ListParagraph", "Compact", "Title")
+                or style_name.startswith("List ")
+            )
+            _set_body_style(para, apply_indent=not skip_indent)
 
     # --- 调整表格样式 ---
     for table in doc.tables:
@@ -790,8 +891,13 @@ def _set_heading_style(para, level: int):
     para.paragraph_format.space_after = Pt(STYLES["heading_space_after"])
 
 
-def _set_body_style(para):
-    """设置正文字体（仿宋_GB2312 + Times New Roman 混排）"""
+def _set_body_style(para, apply_indent=True):
+    """设置正文字体（仿宋_GB2312 + Times New Roman 混排）
+
+    Args:
+        para: python-docx 段落对象
+        apply_indent: 是否应用首行缩进（列表项等已有缩进的不重复添加）
+    """
     from docx.shared import Pt
     from docx.enum.text import WD_LINE_SPACING
 
@@ -806,6 +912,10 @@ def _set_body_style(para):
         para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     para.paragraph_format.line_spacing = Pt(STYLES["body_line_spacing"])
     para.paragraph_format.space_after = Pt(STYLES["body_space_after"])
+
+    # ✅ 首行缩进 2 字符（中文排版标准）
+    if apply_indent:
+        para.paragraph_format.first_line_indent = Pt(STYLES["body_size"] * 2)
 
 
 def _set_code_style(para):
@@ -969,7 +1079,7 @@ def convert_with_python(content: str, output_path: str):
                 i += 1
             for item in items:
                 p = doc.add_paragraph(item, style="List Bullet")
-                _set_body_style(p)
+                _set_body_style(p, apply_indent=False)
             continue
 
         # --- 列表（有序） ---
@@ -980,7 +1090,7 @@ def convert_with_python(content: str, output_path: str):
                 i += 1
             for idx, item in enumerate(items):
                 p = doc.add_paragraph(item, style="List Number")
-                _set_body_style(p)
+                _set_body_style(p, apply_indent=False)
             continue
 
         # --- 普通段落（含行内格式处理） ---
