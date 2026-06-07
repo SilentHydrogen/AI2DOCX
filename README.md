@@ -14,18 +14,49 @@
 | 代码块 → | Consolas 等宽字体 + 灰色背景 |
 | 纯中文无 `#` 标题 → | 自动检测并转为对应级别标题 |
 
-## 快速开始
+## 环境配置
 
-### 前置要求
+### 所需软件
 
-- **Python 3.8+**（推荐 3.13）
-- **Pandoc** — Markdown+LaTeX 转 Word 引擎（[下载安装](https://pandoc.org)）
-- **python-docx** — Word 文档后处理
-- **pyperclip** — 剪贴板读取
+| 软件 | 版本要求 | 用途 | 安装方式 |
+|:---|:---:|:---|:---|
+| **Python** | ≥ 3.8 | 运行脚本 | [python.org](https://python.org) 或微软商店 |
+| **Pandoc** | ≥ 2.18 | 核心转换引擎（Markdown+LaTeX → Word OMML 公式） | [pandoc.org](https://pandoc.org/installing.html) |
+| **python-docx** | 最新 | Word 文档后处理 | `pip install python-docx` |
+| **pyperclip** | 最新 | 剪贴板读取 | `pip install pyperclip` |
+
+> **💡 提示**：Pandoc 是**必装**的。如果不装，脚本会降级为纯 Python 模式，**LaTeX 公式将显示为源码**而非可编辑公式。
+
+### 一键安装
 
 ```bash
+# 安装 Python 依赖包（二选一）
 pip install python-docx pyperclip
+
+# 或者用 pip3
+pip3 install python-docx pyperclip
 ```
+
+Pandoc 需要单独下载安装：
+
+- **Windows**：从 [pandoc.org/releases](https://github.com/jgm/pandoc/releases) 下载 `.msi` 安装包，双击安装
+- **macOS**：`brew install pandoc`
+- **Linux**：`sudo apt install pandoc`（Ubuntu/Debian）或 `sudo dnf install pandoc`（Fedora）
+
+安装完成后验证：
+
+```bash
+python --version      # 应显示 Python 3.8+
+pandoc --version      # 应显示 Pandoc 2.18+
+```
+
+### 验证安装
+
+```bash
+python ai2docx.py -h
+```
+
+如果一切正常，会显示帮助信息，并检测到 Pandoc 可用。
 
 ### 方式一：从剪贴板（最常用）
 
@@ -108,14 +139,24 @@ python ai2docx.py --debug
 
 ### 标题自动识别
 
-对纯中文文本（无 `#` 标记），自动识别标题层级：
+**三种途径识别标题层级**（按优先级）：
 
-| 格式 | 标题级别 |
-|:---|:---:|
-| 一、二、三、... | H2 |
-| 第一章 / 第二节 /... | H2 |
-| 依据 N：/ 方法 N：/... | H3 |
-| 方案 A：/ 方案 B：/... | H4 |
+1. **Markdown 标记**：`# ## ### ####` — Pandoc 原生支持
+2. **HTML 剪贴板**：从 AI 网页复制时，`<h1>`~`<h6>` 标签自动转为对应级别
+3. **纯文本智能检测**（无 `#` 标记时）：
+
+| 格式 | 标题级别 | 示例 |
+|:---|:---:|:---|
+| 一、二、三、... | **H2** | `一、研究背景` |
+| 第一章 / 第二节 /... | **H2** | `第一章 绪论` |
+| （一）(一)... | **H2** | `（一）实验方法` |
+| 1. 概述 / 1、概述 | **H2** | `1. 架构设计` |
+| 1.1 背景 / 2.1 方法 | **H3** | `1.1 研究现状` |
+| 1.1.1 细节 | **H4** | `1.1.1 参数设置` |
+| 依据 N：/ 方法 N：/... | **H3** | `方法 1：梯度下降` |
+| 方案 A：/ 方案 B：/... | **H4** | `方案 A：随机采样` |
+
+> **智能防误判**：连续 3 条以上的编号（如操作步骤）会被识别为有序列表，不会错误转为标题。
 
 ### 文档样式
 
@@ -133,20 +174,12 @@ python ai2docx.py --debug
 
 ```
 AI2DOCX/
-├── ai2docx.py          # 主脚本（~1200 行）
+├── ai2docx.py          # 主脚本（~1500 行）
 ├── 转换.bat             # Windows 一键转换（双击运行）
 ├── README.md            # 本文件
 ├── 测试示例.md           # 含公式 + 代码块的测试文件
 └── .gitignore
 ```
-
-## 依赖
-
-已内置的系统环境：
-- **Python 3.13**（[官网](https://python.org)）
-- **Pandoc**（[下载](https://pandoc.org)）
-- **python-docx**（`pip install python-docx`）
-- **pyperclip**（`pip install pyperclip`）
 
 ## 许可证
 
